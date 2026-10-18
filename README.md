@@ -74,6 +74,24 @@ With a third of GPT-4's entries, the IMDB-trained vocabulary is slightly better 
 
 Same algorithm, same regex engine (`fancy-regex`), roughly the same speed. tiktoken's time includes building Python lists of ids, so this is not a pure Rust-to-Rust comparison.
 
+**Agreement with minbpe.** After the first version I worked through Andrej Karpathy's lecture *Let's build the GPT Tokenizer* and his reference code, [minbpe](https://github.com/karpathy/minbpe), and checked Codebook against it. Codebook's own trainer breaks ties between equally frequent pairs by taking the smaller pair. minbpe takes the pair it saw first, because Python dicts keep insertion order. `--tie first` reproduces that. [`tests/minbpe.rs`](tests/minbpe.rs) runs on fixtures that [`scripts/minbpe-fixtures.py`](scripts/minbpe-fixtures.py) writes by running minbpe and tiktoken:
+
+| Check | Result |
+|---|---|
+| Merges learned from minbpe's test text (186 KB), vocab 512, Basic (no split) and Regex (GPT-4 split) | all 256 the same, in the same order, for both |
+| The lecture's Wikipedia example, `aaabdaaabac` | `[258, 100, 258, 97, 99]`, as minbpe |
+| `--verbose` training log, `.model` and `.vocab` files | byte-for-byte the same as minbpe's `train.py` and `save()` |
+| Loading a `.model` that minbpe saved, then encoding with special tokens allowed (`all`, `none`, a subset) | same ids; `none_raise` errors as minbpe does |
+| GPT-4 special tokens (`<\|endoftext\|>`, the FIM tokens, `<\|endofprompt\|>`) | same ids as tiktoken with `allowed_special="all"` |
+| GPT-4's merge list, recovered from its ranks as minbpe's `GPT4Tokenizer` does | all 100,000 recovered; the first is two spaces |
+
+Training the same way, with every pair recounted before each merge, took 0.2 s (Basic) and 0.1 s (Regex) here, against 8.4 s and 12.7 s for minbpe in Python on the same machine.
+
+Two more things from the lecture are now in the encoder:
+
+- **Merge rounds.** minbpe merges every occurrence of the lowest-ranked pair at once, then looks again. Codebook merges one pair at a time. Both give the same tokens, and a test checks that on 200 random slices of text. For pieces over 1 KB (Basic mode turns a whole file into one piece) the encoder switches to rounds, because merging one pair at a time is quadratic in piece length.
+- **Half a character.** A token like 128 is a lone UTF-8 continuation byte. Decoding it alone isn't valid text, so `decode` in the CLI prints U+FFFD for it, as the lecture shows, and `try_decode` reports an unknown id as an error instead of panicking.
+
 ## 6. Improvement
 
 **Training.** The naive trainer recounts every pair in the corpus before each merge. It took 5.66 s for the first 1,024 merges. The incremental trainer keeps:
@@ -101,7 +119,7 @@ That is about 4.6× tiktoken's throughput on reviews and 5.2× on code, on one t
 
 ## 7. Deployment
 
-**Crate:** `codebook::{Tokenizer, train}`, with `Tokenizer::from_tiktoken`, `encode`, `decode`, `to_tiktoken`, and `train::{count_chunks, train_incremental, vocabulary}`.
+**Crate:** `codebook::{Tokenizer, train, minbpe}`, with `Tokenizer::from_tiktoken`, `encode`, `encode_with_special`, `register_special_tokens`, `decode`, `try_decode`, `decode_lossy`, `to_tiktoken`; `train::{count_chunks, train_incremental, train_first_seen, vocabulary}`; and `minbpe::{from_model, to_model, to_vocab, recover_merges}` for minbpe's file formats.
 
 **CLI:**
 
@@ -109,9 +127,18 @@ That is about 4.6× tiktoken's throughput on reviews and 5.2× on code, on one t
 cargo build --release
 ./target/release/codebook train data/corpus/imdb-train.txt --vocab 32768 -o my.tiktoken
 ./target/release/codebook encode --gpt4 --pieces "Hello there, tokenizer!"
+./target/release/codebook encode --gpt4 --allow-special all "<|endoftext|>Hello"
 ./target/release/codebook decode --gpt4 9906 1070
 ./target/release/codebook count --ranks tokenizers/imdb-32k.tiktoken data/corpus/imdb-test.txt
+./target/release/codebook merges --gpt4 --limit 20        # GPT-4's first merges, recovered
+
+# Train exactly as minbpe's train.py, then use the model it writes
+./target/release/codebook train tests/fixtures/taylorswift.txt --vocab 512 \
+    --pattern minbpe --tie first --verbose --model regex   # writes regex.model, regex.vocab
+./target/release/codebook encode --model regex.model "hello world"
 ```
+
+`--pattern none` is minbpe's BasicTokenizer (no split). `--pattern minbpe` is its GPT-4 split pattern, which differs slightly from tiktoken's at the ends of lines.
 
 **Browser:**
 - The crate compiles to `wasm32-unknown-unknown` with a small C-style interface (`src/wasm.rs`, no bindings crate).
@@ -128,7 +155,8 @@ mkdir -p data/ranks && cd data/ranks && \
   curl -O https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken && \
   curl -O https://openaipublic.blob.core.windows.net/encodings/r50k_base.tiktoken && cd ../..
 pip install tiktoken && python3 bench/tiktoken_bench.py   # reference ids and speed
-cargo test --release                      # 10 unit tests
+cargo test --release                      # 12 unit tests + 10 minbpe checks
+python3 scripts/minbpe-fixtures.py path/to/minbpe   # optional: rebuild tests/fixtures
 cargo run --release --bin experiment      # about 80 s; writes results/experiment.json
 rustup target add wasm32-unknown-unknown
 python3 scripts/build-demo.py             # writes docs/index.html
@@ -139,8 +167,10 @@ python3 scripts/build-demo.py             # writes docs/index.html
 ```
 src/encoder.rs           encode, decode, tiktoken rank files, the merge loop
 src/scan.rs              the hand-written GPT-4 pre-tokenizer
-src/train.rs             naive and incremental BPE training
+src/train.rs             naive, incremental and minbpe-style BPE training
+src/minbpe.rs            minbpe's .model/.vocab formats, recovering GPT-4's merges
 src/main.rs              the codebook CLI
+tests/minbpe.rs          the checks against minbpe and tiktoken (fixtures in tests/fixtures/)
 src/wasm.rs              the browser interface
 src/bin/experiment.rs    the whole evaluation
 bench/tiktoken_bench.py  tiktoken's ids and speed, for comparison

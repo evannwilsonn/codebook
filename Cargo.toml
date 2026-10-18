@@ -24,3 +24,6 @@ inherits = "release"
 opt-level = "z"
 strip = true
 panic = "abort"
+
+[dev-dependencies]
+serde_json = "1"

@@ -288,6 +288,14 @@ table.data td{padding:6px 8px;text-align:right;border-bottom:1px dotted var(--ru
         <div class="note"><h3>A book fits its text</h3><p id="n1"></p></div>
         <div class="note"><h3>Nothing is unknown</h3><p>The book starts with all 256 bytes, so any text can be encoded, including emoji and scripts it never saw. They just cost more: a Chinese character it has no entry for takes three code words, one per byte. Try "three languages" on the first spread.</p></div>
         <div class="note"><h3>The scanner</h3><p id="n3"></p></div>
+        <div class="note"><h3>Checked against minbpe</h3><p>Karpathy's lecture <i>Let's build the GPT Tokenizer</i> comes with a reference tokenizer in Python, minbpe. Trained on minbpe's own test text, with its rule for breaking ties, this book learns the same merges in the same order and writes the same model files.</p>
+          <table class="checks">
+            <tr><td>Merges, Basic and Regex, vocab 512</td><td>256 of 256 alike</td></tr>
+            <tr><td>Training log, .model, .vocab</td><td>byte for byte</td></tr>
+            <tr><td>GPT-4 special tokens, vs tiktoken</td><td>same ids</td></tr>
+            <tr><td>GPT-4 merges recovered from ranks</td><td>100,000</td></tr>
+            <tr><td>Same training, minbpe vs Rust</td><td>12.7 s vs 0.1 s</td></tr>
+          </table></div>
         <span class="folio">7</span>
       </div>
       <div class="page right">

@@ -8,13 +8,14 @@
 //! `cl100k_base` (GPT-4) and `r50k_base` (GPT-2) vocabularies and be checked against tiktoken.
 
 pub mod encoder;
+pub mod minbpe;
 pub mod scan;
 pub mod train;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
-pub use encoder::{Rank, Tokenizer};
+pub use encoder::{AllowedSpecial, Rank, Tokenizer};
 
 /// The pre-tokenizer pattern of `cl100k_base`, used by GPT-3.5 and GPT-4, copied from tiktoken.
 /// Letters may carry one leading non-letter (usually a space), numbers split into runs of at
@@ -24,3 +25,6 @@ pub const GPT4_PATTERN: &str = r"'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+
 /// The pre-tokenizer pattern of `r50k_base`, used by GPT-2, copied from tiktoken.
 pub const GPT2_PATTERN: &str =
     r"'(?:[sdmt]|ll|ve|re)| ?\p{L}++| ?\p{N}++| ?[^\s\p{L}\p{N}]++|\s++$|\s+(?!\S)|\s";
+
+/// No pre-tokenizer: the whole text is one piece, as in minbpe's BasicTokenizer.
+pub const NO_SPLIT: &str = "";

@@ -4,6 +4,8 @@
 //! occurs, start every piece as a list of byte tokens, then repeatedly find the most frequent
 //! adjacent pair of tokens (weighted by piece count), give it a new id, and merge it everywhere.
 //! Ties go to the smaller pair of ids, so both trainers below produce the same merges.
+//! [`train_first_seen`] breaks ties the way minbpe does instead (the pair seen first in the
+//! text wins), which reproduces minbpe's merges exactly.
 
 use fancy_regex::Regex;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -37,6 +39,124 @@ pub fn count_chunks<'t>(
         }
     }
     counts
+}
+
+/// Like [`count_chunks`], but keeps the pieces in the order they first appear, which
+/// [`train_first_seen`] needs. With no regex each document is one piece (minbpe's Basic mode).
+pub fn count_chunks_ordered<'t>(
+    regex: Option<&Regex>,
+    docs: impl IntoIterator<Item = &'t str>,
+) -> Vec<(&'t str, u64)> {
+    let mut index: HashMap<&str, usize> = HashMap::default();
+    let mut out: Vec<(&str, u64)> = Vec::new();
+    let mut add = |piece: &'t str| match index.get(piece) {
+        Some(&i) => out[i].1 += 1,
+        None => {
+            index.insert(piece, out.len());
+            out.push((piece, 1));
+        }
+    };
+    for doc in docs {
+        match regex {
+            Some(re) => {
+                for m in re.find_iter(doc) {
+                    add(m.expect("regex backtrack limit").as_str());
+                }
+            }
+            None if !doc.is_empty() => add(doc),
+            None => {}
+        }
+    }
+    out
+}
+
+/// minbpe's trainer, tie rule included: recount every pair before each merge, and among the
+/// most frequent pairs take the one that appears first in the text. That is what Python's
+/// `max(stats, key=stats.get)` does, since a dict keeps insertion order. Pieces must be in
+/// first-appearance order, as [`count_chunks_ordered`] returns them.
+pub fn train_first_seen(pieces: &[(&str, u64)], merges: usize) -> Vec<Merge> {
+    let mut words: Vec<(Vec<Rank>, u64)> = pieces
+        .iter()
+        .map(|(p, c)| (p.bytes().map(Rank::from).collect(), *c))
+        .collect();
+    let mut out = Vec::with_capacity(merges);
+    for step in 0..merges {
+        // pair -> (count, order of first sighting)
+        let mut counts: HashMap<Pair, (u64, usize)> = HashMap::default();
+        let mut seen = 0usize;
+        for (word, count) in &words {
+            for w in word.windows(2) {
+                let e = counts.entry((w[0], w[1])).or_insert_with(|| {
+                    seen += 1;
+                    (0, seen)
+                });
+                e.0 += count;
+            }
+        }
+        let Some((&pair, &(count, _))) = counts
+            .iter()
+            .max_by(|a, b| a.1 .0.cmp(&b.1 .0).then(b.1 .1.cmp(&a.1 .1)))
+        else {
+            break;
+        };
+        let id = 256 + step as Rank;
+        for (word, _) in words.iter_mut() {
+            if word.windows(2).any(|w| (w[0], w[1]) == pair) {
+                *word = merge_word(word, pair, id);
+            }
+        }
+        out.push(Merge { pair, id, count });
+    }
+    out
+}
+
+/// One line of training output in minbpe's format, for `--verbose`:
+/// `merge 1/256: (101, 32) -> 256 (b'e ') had 2981 occurrences`.
+pub fn describe_merge(m: &Merge, total: usize, vocab: &[Vec<u8>]) -> String {
+    format!(
+        "merge {}/{}: ({}, {}) -> {} ({}) had {} occurrences",
+        m.id - 255,
+        total,
+        m.pair.0,
+        m.pair.1,
+        m.id,
+        py_bytes(&vocab[m.id as usize]),
+        m.count
+    )
+}
+
+/// Python's `repr()` of a bytes object.
+pub fn py_bytes(b: &[u8]) -> String {
+    let quote = if b.contains(&b'\'') && !b.contains(&b'"') { '"' } else { '\'' };
+    let mut s = String::from("b");
+    s.push(quote);
+    for &c in b {
+        match c {
+            b'\\' => s.push_str("\\\\"),
+            b'\n' => s.push_str("\\n"),
+            b'\r' => s.push_str("\\r"),
+            b'\t' => s.push_str("\\t"),
+            _ if c as char == quote => {
+                s.push('\\');
+                s.push(quote);
+            }
+            0x20..=0x7e => s.push(c as char),
+            _ => s.push_str(&format!("\\x{c:02x}")),
+        }
+    }
+    s.push(quote);
+    s
+}
+
+/// Byte strings of the tokens in id order: 0..256 are single bytes, then one per merge.
+pub fn token_list(merges: &[Merge]) -> Vec<Vec<u8>> {
+    let mut bytes: Vec<Vec<u8>> = (0..=255u8).map(|b| vec![b]).collect();
+    for m in merges {
+        let mut joined = bytes[m.pair.0 as usize].clone();
+        joined.extend_from_slice(&bytes[m.pair.1 as usize]);
+        bytes.push(joined);
+    }
+    bytes
 }
 
 /// Turns piece counts into (byte tokens, count) pairs in a fixed order, so training is
@@ -183,13 +303,7 @@ pub fn train_incremental(chunks: &HashMap<&str, u64>, merges: usize) -> Vec<Merg
 
 /// The byte string of every token: ids 0..256 are single bytes, then one per merge.
 pub fn vocabulary(merges: &[Merge]) -> HashMap<Vec<u8>, Rank> {
-    let mut bytes: Vec<Vec<u8>> = (0..=255u8).map(|b| vec![b]).collect();
-    for m in merges {
-        let mut joined = bytes[m.pair.0 as usize].clone();
-        joined.extend_from_slice(&bytes[m.pair.1 as usize]);
-        bytes.push(joined);
-    }
-    bytes
+    token_list(merges)
         .into_iter()
         .enumerate()
         .map(|(i, b)| (b, i as Rank))

@@ -10,14 +10,37 @@ pub type Rank = u32;
 pub struct Tokenizer {
     encoder: HashMap<Vec<u8>, Rank>,
     decoder: HashMap<Rank, Vec<u8>>,
-    regex: Regex,
+    pattern: String,
+    /// The pre-tokenizer. `None` is minbpe's BasicTokenizer: the whole text is one piece.
+    regex: Option<Regex>,
     /// Split with the hand-written GPT-4 scanner instead of the regex (same pieces, faster).
     scan: bool,
+    /// Special tokens in the order they were registered, and a regex that finds any of them.
+    special: Vec<(String, Rank)>,
+    special_regex: Option<Regex>,
+    /// The merge that made each token from id 256 on, when known (training or a minbpe model).
+    merges: Option<Vec<(Rank, Rank)>>,
 }
+
+/// Which special tokens [`Tokenizer::encode_with_special`] may produce, as in minbpe and
+/// tiktoken: `All`, `None` (special strings are encoded as ordinary text), `NoneRaise` (the
+/// default in tiktoken: it is an error for the text to contain one), or a subset.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AllowedSpecial {
+    All,
+    None,
+    NoneRaise,
+    Set(Vec<String>),
+}
+
+/// Pieces longer than this are merged a whole round at a time (minbpe's way) instead of one
+/// pair at a time (tiktoken's way). The result is the same; only the cost differs.
+const LONG_PIECE: usize = 1024;
 
 impl Tokenizer {
     /// Builds a tokenizer from byte-string ranks and a pre-tokenizer pattern. Every single byte
-    /// must have a rank, so that any text can be encoded.
+    /// must have a rank, so that any text can be encoded. An empty pattern means no
+    /// pre-tokenizer at all ([`crate::NO_SPLIT`], minbpe's BasicTokenizer).
     pub fn new(encoder: HashMap<Vec<u8>, Rank>, pattern: &str) -> Result<Self, String> {
         for b in 0..=255u8 {
             if !encoder.contains_key(&vec![b]) {
@@ -29,14 +52,62 @@ impl Tokenizer {
         if decoder.len() != encoder.len() {
             return Err("two byte strings share a rank".into());
         }
-        let regex = Regex::new(pattern).map_err(|e| e.to_string())?;
+        let regex = if pattern.is_empty() {
+            None
+        } else {
+            Some(Regex::new(pattern).map_err(|e| e.to_string())?)
+        };
         let scan = pattern == crate::GPT4_PATTERN;
         Ok(Self {
             encoder,
             decoder,
+            pattern: pattern.to_owned(),
             regex,
             scan,
+            special: Vec::new(),
+            special_regex: None,
+            merges: None,
         })
+    }
+
+    /// Records the merge list the vocabulary came from (training output, or a minbpe model).
+    pub fn with_merges(mut self, merges: Vec<(Rank, Rank)>) -> Self {
+        self.merges = Some(merges);
+        self
+    }
+
+    /// The merges that build each token from id 256 on, if they were recorded.
+    pub fn merges(&self) -> Option<&[(Rank, Rank)]> {
+        self.merges.as_deref()
+    }
+
+    pub fn pattern(&self) -> &str {
+        &self.pattern
+    }
+
+    /// Adds special tokens: strings that become one id each and never take part in merges,
+    /// like `<|endoftext|>`. Their ids must not collide with ordinary tokens.
+    pub fn register_special_tokens(&mut self, tokens: &[(&str, Rank)]) -> Result<(), String> {
+        for &(s, id) in tokens {
+            if s.is_empty() {
+                return Err("a special token can't be empty".into());
+            }
+            if self.decoder.contains_key(&id) || self.special.iter().any(|(t, i)| t == s || *i == id) {
+                return Err(format!("special token {s:?} with id {id} collides with an existing token"));
+            }
+            self.special.push((s.to_owned(), id));
+        }
+        // Longest first, so that a special token that is a prefix of another can't win.
+        let mut alts: Vec<&str> = self.special.iter().map(|(s, _)| s.as_str()).collect();
+        alts.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        let alts: Vec<String> = alts.iter().map(|s| fancy_regex::escape(s).into_owned()).collect();
+        self.special_regex = Some(Regex::new(&alts.join("|")).map_err(|e| e.to_string())?);
+        Ok(())
+    }
+
+    /// The special tokens, in registration order.
+    pub fn special_tokens(&self) -> &[(String, Rank)] {
+        &self.special
     }
 
     /// Reads a `.tiktoken` file: one `<base64 bytes> <rank>` pair per line.
@@ -75,12 +146,23 @@ impl Tokenizer {
         out
     }
 
+    /// Ordinary tokens plus special tokens.
     pub fn vocab_size(&self) -> usize {
-        self.encoder.len()
+        self.encoder.len() + self.special.len()
+    }
+
+    /// The ranked byte strings, without special tokens.
+    pub fn ranks(&self) -> &HashMap<Vec<u8>, Rank> {
+        &self.encoder
     }
 
     pub fn token_bytes(&self, id: Rank) -> Option<&[u8]> {
-        self.decoder.get(&id).map(|v| v.as_slice())
+        self.decoder.get(&id).map(|v| v.as_slice()).or_else(|| {
+            self.special
+                .iter()
+                .find(|(_, i)| *i == id)
+                .map(|(s, _)| s.as_bytes())
+        })
     }
 
     /// Always split with the regex, even for the GPT-4 pattern. Used to measure the scanner.
@@ -91,14 +173,14 @@ impl Tokenizer {
 
     /// The pieces the pre-tokenizer splits `text` into. Tokens never cross a piece boundary.
     pub fn pieces<'t>(&'t self, text: &'t str) -> Box<dyn Iterator<Item = &'t str> + 't> {
-        if self.scan {
-            Box::new(crate::scan::gpt4_pieces(text))
-        } else {
-            Box::new(
-                self.regex
+        match &self.regex {
+            _ if self.scan => Box::new(crate::scan::gpt4_pieces(text)),
+            Some(regex) => Box::new(
+                regex
                     .find_iter(text)
                     .map(|m| m.expect("regex backtrack limit").as_str()),
-            )
+            ),
+            None => Box::new((!text.is_empty()).then_some(text).into_iter()),
         }
     }
 
@@ -127,9 +209,53 @@ impl Tokenizer {
         out
     }
 
+    /// Encodes text that may contain special tokens, following minbpe's `encode`. Text between
+    /// the allowed special tokens is encoded as ordinary text.
+    pub fn encode_with_special(&self, text: &str, allowed: &AllowedSpecial) -> Result<Vec<Rank>, String> {
+        let allowed: Vec<&(String, Rank)> = match allowed {
+            AllowedSpecial::All => self.special.iter().collect(),
+            AllowedSpecial::None => Vec::new(),
+            AllowedSpecial::NoneRaise => {
+                if let Some((s, _)) = self.special.iter().find(|(s, _)| text.contains(s.as_str())) {
+                    return Err(format!("the text contains the special token {s:?}, which isn't allowed"));
+                }
+                Vec::new()
+            }
+            AllowedSpecial::Set(names) => {
+                for n in names {
+                    if !self.special.iter().any(|(s, _)| s == n) {
+                        return Err(format!("{n:?} is not a special token of this tokenizer"));
+                    }
+                }
+                self.special.iter().filter(|(s, _)| names.contains(s)).collect()
+            }
+        };
+        if allowed.is_empty() {
+            return Ok(self.encode(text));
+        }
+        let mut alts: Vec<&str> = allowed.iter().map(|(s, _)| s.as_str()).collect();
+        alts.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        let alts: Vec<String> = alts.iter().map(|s| fancy_regex::escape(s).into_owned()).collect();
+        let re = Regex::new(&alts.join("|")).map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        let mut last = 0;
+        for m in re.find_iter(text) {
+            let m = m.map_err(|e| e.to_string())?;
+            out.extend(self.encode(&text[last..m.start()]));
+            out.push(allowed.iter().find(|(s, _)| s == m.as_str()).expect("matched a special").1);
+            last = m.end();
+        }
+        out.extend(self.encode(&text[last..]));
+        Ok(out)
+    }
+
     fn encode_piece(&self, piece: &[u8], out: &mut Vec<Rank>) {
         if let Some(&rank) = self.encoder.get(piece) {
             out.push(rank);
+            return;
+        }
+        if piece.len() > LONG_PIECE {
+            out.extend(merge_rounds(&self.encoder, piece));
             return;
         }
         let bounds = merge_bounds(&self.encoder, piece);
@@ -140,13 +266,57 @@ impl Tokenizer {
 
     /// Concatenates the bytes of each token. The result is valid UTF-8 only when the ids are
     /// a whole encoding; a single token can hold part of a multi-byte character.
+    /// Panics on an id that isn't in the vocabulary; see [`try_decode`](Self::try_decode).
     pub fn decode(&self, ids: &[Rank]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(ids.len() * 4);
-        for id in ids {
-            out.extend_from_slice(&self.decoder[id]);
-        }
-        out
+        self.try_decode(ids).expect("unknown token id")
     }
+
+    /// Like [`decode`](Self::decode), but an unknown id is an error rather than a panic.
+    pub fn try_decode(&self, ids: &[Rank]) -> Result<Vec<u8>, String> {
+        let mut out = Vec::with_capacity(ids.len() * 4);
+        for &id in ids {
+            out.extend_from_slice(self.token_bytes(id).ok_or(format!("{id} is not a token id"))?);
+        }
+        Ok(out)
+    }
+
+    /// Decodes to text, replacing bytes that aren't valid UTF-8 with U+FFFD, as minbpe does with
+    /// `errors="replace"`. Decoding token 128 alone, half of a two-byte character, gives "\u{fffd}".
+    pub fn decode_lossy(&self, ids: &[Rank]) -> Result<String, String> {
+        Ok(String::from_utf8_lossy(&self.try_decode(ids)?).into_owned())
+    }
+}
+
+/// Encodes a piece minbpe's way: each round, find the lowest-rank adjacent pair and merge every
+/// occurrence of it, left to right. A merge can only create pairs whose token was added later,
+/// with a higher rank, so this gives the same tokens as [`merge_bounds`], in time proportional
+/// to the piece length times the number of rounds rather than to its square.
+pub fn merge_rounds(ranks: &HashMap<Vec<u8>, Rank>, piece: &[u8]) -> Vec<Rank> {
+    let mut spans: Vec<(usize, usize)> = (0..piece.len()).map(|i| (i, i + 1)).collect();
+    loop {
+        let mut best = Rank::MAX;
+        for w in spans.windows(2) {
+            if let Some(&r) = ranks.get(&piece[w[0].0..w[1].1]) {
+                best = best.min(r);
+            }
+        }
+        if best == Rank::MAX {
+            break;
+        }
+        let mut next = Vec::with_capacity(spans.len());
+        let mut i = 0;
+        while i < spans.len() {
+            if i + 1 < spans.len() && ranks.get(&piece[spans[i].0..spans[i + 1].1]) == Some(&best) {
+                next.push((spans[i].0, spans[i + 1].1));
+                i += 2;
+            } else {
+                next.push(spans[i]);
+                i += 1;
+            }
+        }
+        spans = next;
+    }
+    spans.iter().map(|&(a, b)| ranks[&piece[a..b]]).collect()
 }
 
 /// Splits `piece` into tokens by BPE and returns the token boundaries (byte offsets, starting
