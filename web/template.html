@@ -120,7 +120,8 @@ textarea:focus{outline:none}
 .longest li{font:400 18px/1.85 var(--type);white-space:pre;border-bottom:1px dotted var(--rule-2)}
 .longest li .ws{color:var(--faint)}
 .longest li span.n{float:right;font:400 13px var(--type);color:var(--faint);line-height:2.5}
-.marginal{border-left:3px solid var(--red);padding:2px 0 2px 16px;margin:24px 0 0;color:var(--soft)}
+.marginal{margin:24px 0 0;color:var(--soft);font-style:italic}
+.marginal::before{content:"¶ ";font-style:normal;color:var(--red)}
 
 /* Rates */
 .legend{display:flex;gap:18px;flex-wrap:wrap;font:400 13px var(--type);color:var(--soft);margin:6px 0}
