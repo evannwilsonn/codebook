@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Codebook tokenizer</title>
+<meta name="description" content="A GPT-style byte-pair tokenizer written in Rust, running in your browser. It learned a 32,768-entry vocabulary from IMDB reviews and matches tiktoken token for token.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Libre+Caslon+Display&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --desk:#2f3b33;--desk-2:#27322b;--page:#f4eedd;--page-edge:#e6dcc2;--gutter:#d8ccae;
+  --ink:#231f19;--soft:#4c4436;--faint:#6b6150;--rule:#cbbd99;--rule-2:#e0d5b8;
+  --tape:#fbf8ee;--tape-2:#ece4cc;
+  --red:#a8321d;--blue:#2a5d92;--c-imdb:#2a5d92;--c-rust:#b2361f;
+  --tab-1:#a8321d;--tab-2:#2a5d92;--tab-3:#6d5a1f;--tab-4:#3d4a41;
+  --text:"Libre Caslon Text",Georgia,serif;--display:"Libre Caslon Display","Libre Caslon Text",Georgia,serif;
+  --type:"Courier Prime","Courier New",monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --desk:#121512;--desk-2:#0d0f0d;--page:#26231d;--page-edge:#1f1c17;--gutter:#16140f;
+  --ink:#ece3cb;--soft:#cfc3a5;--faint:#a99d81;--rule:#4e4637;--rule-2:#37322a;
+  --tape:#312d25;--tape-2:#3a352c;
+  --red:#e0694f;--blue:#4f8fd6;--c-imdb:#4f8fd6;--c-rust:#e0694f;
+  --tab-1:#a8402c;--tab-2:#2e66a6;--tab-3:#75621f;--tab-4:#4c5c51;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --desk:#121512;--desk-2:#0d0f0d;--page:#26231d;--page-edge:#1f1c17;--gutter:#16140f;
+  --ink:#ece3cb;--soft:#cfc3a5;--faint:#a99d81;--rule:#4e4637;--rule-2:#37322a;
+  --tape:#312d25;--tape-2:#3a352c;
+  --red:#e0694f;--blue:#4f8fd6;--c-imdb:#4f8fd6;--c-rust:#e0694f;
+  --tab-1:#a8402c;--tab-2:#2e66a6;--tab-3:#75621f;--tab-4:#4c5c51;color-scheme:dark}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;background:var(--desk);color:var(--ink);font:400 16px/1.6 var(--text)}
+a{color:inherit;text-decoration-thickness:1px;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--red);outline-offset:3px}
+.sc{font-variant:all-small-caps;letter-spacing:.04em;font-weight:700;color:var(--faint);font-size:15px}
+
+/* The desk */
+.desk{max-width:1260px;margin:0 auto;padding:28px 64px 40px 28px}
+.desktop{display:flex;justify-content:space-between;align-items:center;gap:16px;color:#d9d2bd;margin:0 0 14px 4px;font:400 14px var(--type)}
+[data-theme="dark"] .desktop,:root:not([data-theme="light"]) .desktop{color:#bdb59f}
+.desktop a,.desktop button{color:inherit;background:none;border:0;font:inherit;cursor:pointer;padding:4px 0;border-bottom:1px solid currentColor;text-decoration:none}
+.desktop nav{display:flex;gap:20px}
+
+/* The open book */
+.book{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);background:var(--page);border-radius:4px 10px 10px 4px;box-shadow:0 1px 0 var(--page-edge),0 3px 0 var(--page-edge),0 5px 0 var(--rule),0 24px 40px -18px rgba(0,0,0,.55)}
+.book::before{content:"";position:absolute;top:0;bottom:0;left:50%;width:56px;transform:translateX(-50%);pointer-events:none;background:linear-gradient(90deg,transparent,var(--gutter) 46%,var(--gutter) 54%,transparent);opacity:.75}
+.spread{display:contents}
+.spread[hidden]{display:none}
+.page{position:relative;padding:30px 52px 56px;min-width:0;min-height:740px;animation:turn .45s cubic-bezier(.22,1,.36,1)}
+.page.left{padding-right:60px}
+.page.right{padding-left:60px}
+@keyframes turn{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+.runhead{display:flex;justify-content:space-between;gap:16px;text-align:right;border-bottom:1px solid var(--rule);padding-bottom:6px;margin-bottom:26px}
+.folio{position:absolute;bottom:20px;font:400 14px var(--text);color:var(--faint)}
+.left .folio{left:52px}
+.right .folio{right:52px}
+
+/* Thumb index */
+.tabs{position:absolute;top:56px;right:-46px;display:flex;flex-direction:column;gap:6px;z-index:2}
+.tabs button{width:46px;padding:16px 0;border:0;border-radius:0 8px 8px 0;cursor:pointer;color:#fbf6e8;font:700 15px/1 var(--text);letter-spacing:.04em;writing-mode:vertical-rl;text-orientation:mixed;transition:transform .2s cubic-bezier(.22,1,.36,1),filter .2s}
+.tabs button:nth-child(1){background:var(--tab-1)}
+.tabs button:nth-child(2){background:var(--tab-2)}
+.tabs button:nth-child(3){background:var(--tab-3)}
+.tabs button:nth-child(4){background:var(--tab-4)}
+.tabs button[aria-selected="false"]{filter:saturate(.55) brightness(.85);transform:translateX(-8px)}
+.tabs button:hover{filter:none;transform:none}
+
+h1{font:400 clamp(48px,6vw,84px)/.92 var(--display);margin:0 0 18px;letter-spacing:-.01em}
+h1 em{color:var(--red)}
+h2{font:400 40px/1 var(--display);margin:0 0 12px}
+h2 em{color:var(--red)}
+h3,h2.h3{font:700 18px/1.3 var(--text);margin:0 0 6px}
+.lede{margin:0 0 24px;color:var(--soft);text-wrap:pretty}
+.lede b{color:var(--ink)}
+p{text-wrap:pretty}
+.dropcap::first-letter{float:left;font:400 64px/.8 var(--display);margin:6px 8px 0 0;color:var(--red)}
+
+/* Send: message slip */
+.slip{border:1px solid var(--rule);background:var(--tape)}
+.slip label{display:block;padding:10px 14px 0}
+textarea{display:block;width:100%;min-height:162px;resize:vertical;border:0;padding:4px 14px 6px;background:transparent repeating-linear-gradient(transparent 0 31px,var(--rule-2) 31px 32px) 0 4px;color:var(--ink);font:400 17px/32px var(--type)}
+textarea:focus{outline:none}
+.samples{display:flex;flex-wrap:wrap;gap:6px 16px;margin:14px 0 6px}
+.samples button{background:none;border:0;border-bottom:1px dashed var(--rule);padding:3px 0;font:400 14px var(--type);color:var(--ink);cursor:pointer}
+.samples button:hover,.samples button[aria-pressed="true"]{color:var(--red);border-bottom-color:var(--red)}
+.status{font:400 13px var(--type);color:var(--faint);margin:6px 0 0}
+
+/* Send: the two transcriptions */
+.ledger{margin-bottom:26px}
+.ledger header{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.count{display:flex;gap:18px;align-items:baseline;margin:4px 0 10px;border-top:1px solid var(--rule);padding-top:6px}
+.count b{font:700 26px/1 var(--type)}
+.count span{font-size:14px;color:var(--soft);white-space:nowrap}
+.tape{display:flex;flex-wrap:wrap;gap:10px 0;align-content:flex-start;max-height:236px;overflow:auto;padding:2px 2px 4px;border-bottom:1px solid var(--rule)}
+.tok{position:relative;display:inline-flex;flex-direction:column;padding:14px 6px 3px;background:var(--tape);border-right:1px solid var(--rule);font:400 15px/1.2 var(--type);white-space:pre}
+.tok:nth-child(even){background:var(--tape-2)}
+.tok i{position:absolute;top:2px;left:6px;font:400 10px/1 var(--type);font-style:normal;color:var(--faint)}
+.tok .ws{color:var(--faint)}
+.tok .hex{font:700 12px var(--type);color:var(--red)}
+.tok.break{flex-basis:100%;height:0;padding:0;border:0;background:none}
+.tok:hover{background:var(--ink);color:var(--page)}
+.tok:hover i,.tok:hover .ws{color:var(--page)}
+.compare{font:400 italic 18px/1.45 var(--text);margin:0;min-height:1.5em}
+.compare b{font:700 17px var(--type);font-style:normal}
+
+/* Entries: dictionary columns */
+.dict{columns:2;column-gap:32px;column-rule:1px solid var(--rule-2)}
+.entry{display:flex;align-items:baseline;gap:8px;break-inside:avoid;padding:3px 0}
+.entry .no{font:700 14px var(--text);color:var(--red);min-width:30px}
+.entry .ph{font:400 17px var(--type);white-space:pre}
+.entry .ph .ws{color:var(--faint)}
+.entry .lead{flex:1;border-bottom:1px dotted var(--rule);transform:translateY(-4px)}
+.entry .ct{font:400 13px var(--type);color:var(--soft)}
+.longest{list-style:none;margin:6px 0 28px;padding:0}
+.longest li{font:400 18px/1.85 var(--type);white-space:pre;border-bottom:1px dotted var(--rule-2)}
+.longest li .ws{color:var(--faint)}
+.longest li span.n{float:right;font:400 13px var(--type);color:var(--faint);line-height:2.5}
+.marginal{border-left:3px solid var(--red);padding:2px 0 2px 16px;margin:24px 0 0;color:var(--soft)}
+
+/* Rates */
+.legend{display:flex;gap:18px;flex-wrap:wrap;font:400 13px var(--type);color:var(--soft);margin:6px 0}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .grid line{stroke:var(--rule-2)}
+.chart .axis text{font:400 14px var(--type);fill:var(--faint)}
+.chart .lbl{font:700 15px var(--type)}
+.chart .hit{fill:transparent;cursor:crosshair}
+.tip{position:fixed;z-index:20;pointer-events:none;background:var(--ink);color:var(--page);font:400 13px/1.45 var(--type);padding:8px 10px;max-width:260px;opacity:0;transition:opacity .12s;white-space:pre-line}
+.tally{display:grid;grid-template-columns:auto 1fr;gap:4px 18px;align-items:baseline;margin:6px 0 4px}
+.tally .zero{font:400 92px/.85 var(--display);color:var(--blue);grid-row:span 2}
+.tally p{margin:0;color:var(--soft);font-size:15px}
+.checks{width:100%;border-collapse:collapse;font:400 14px var(--type);margin:12px 0 30px}
+.checks td{padding:5px 0;border-bottom:1px dotted var(--rule)}
+.checks td:last-child{text-align:right;color:var(--blue);font-weight:700}
+.bars .group{margin:10px 0 18px}
+.bars .gname{font-variant:all-small-caps;letter-spacing:.04em;font-weight:700;color:var(--faint);font-size:15px}
+.bar{display:grid;grid-template-columns:150px minmax(0,1fr) 80px;gap:10px;align-items:center;padding:3px 0}
+.bar .name{font-size:14px;line-height:1.25}
+.bar .name small{display:block;color:var(--faint);font-size:12.5px}
+.bar .track{height:12px;position:relative}
+.bar .fill{position:absolute;inset:0 auto 0 0;background:var(--soft);border-radius:0 3px 3px 0}
+.bar.mine .fill{background:var(--blue)}
+.bar .val{font:700 14px var(--type);text-align:right;white-space:nowrap}
+
+/* Notes */
+.note{margin:0 0 26px}
+.note p{margin:0;color:var(--soft)}
+.tablewrap{overflow-x:auto}
+table.data{border-collapse:collapse;width:100%;font:400 13.5px var(--type)}
+table.data caption{text-align:left;font:700 18px var(--text);padding-bottom:8px}
+table.data th{font-variant:all-small-caps;letter-spacing:.04em;font-family:var(--text);font-weight:700;font-size:14px;color:var(--faint);text-align:right;padding:6px 8px;border-bottom:2px solid var(--ink)}
+table.data th:first-child,table.data td:first-child{text-align:left}
+table.data td{padding:6px 8px;text-align:right;border-bottom:1px dotted var(--rule)}
+.colophon{margin-top:30px;border-top:1px solid var(--rule);padding-top:12px;font-size:14px;color:var(--soft)}
+.colophon p{margin:0 0 8px}
+
+@media (max-width:980px){
+  .desk{padding:16px 16px 32px}
+  .book{grid-template-columns:1fr;border-radius:6px}
+  .book::before{display:none}
+  .page{min-height:0;padding:26px 22px 54px!important}
+  .page.left{border-bottom:1px solid var(--rule)}
+  .left .folio,.right .folio{left:22px;right:auto}
+  .tabs{position:sticky;top:0;right:auto;flex-direction:row;gap:4px;margin:0 0 -2px;z-index:5;background:var(--desk);padding-top:6px}
+  .tabs button{writing-mode:horizontal-tb;width:auto;flex:1;padding:12px 6px;border-radius:8px 8px 0 0;transform:none}
+  .tabs button[aria-selected="false"]{transform:translateY(4px)}
+  .tabs button:hover{transform:none}
+}
+@media (max-width:560px){
+  .dict{columns:1}
+  .runhead .sc+.sc{display:none}
+  .count{gap:6px 12px;flex-wrap:wrap}
+  .bar{grid-template-columns:106px minmax(0,1fr) 78px;gap:8px}
+  h2{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="desk">
+  <div class="desktop">
+    <span>Codebook, a tokenizer · project 08</span>
+    <nav><a href="https://github.com/evannwilsonn/codebook">source</a><button type="button" id="theme">lamp off</button></nav>
+  </div>
+
+  <div class="book" id="book">
+    <div class="tabs" role="tablist" aria-label="Sections of the book">
+      <button type="button" role="tab" id="tab-send" aria-controls="sp-send" data-spread="send">Send</button>
+      <button type="button" role="tab" id="tab-entries" aria-controls="sp-entries" data-spread="entries">Entries</button>
+      <button type="button" role="tab" id="tab-rates" aria-controls="sp-rates" data-spread="rates">Rates</button>
+      <button type="button" role="tab" id="tab-notes" aria-controls="sp-notes" data-spread="notes">Notes</button>
+    </div>
+
+    <!-- Spread 1: send a message -->
+    <div class="spread" id="sp-send" role="tabpanel" aria-labelledby="tab-send">
+      <div class="page left">
+        <div class="runhead"><span class="sc">Codebook</span><span class="sc">Send a message</span></div>
+        <h1>Pay by <em>the token.</em></h1>
+        <p class="lede dropcap">Telegraph companies charged by the word, so businesses bought code books that swapped common phrases for single code words. A GPT tokenizer does the same with bytes: it learns which strings come up most and gives each one a number, and a language model reads, and bills, by the number. This one is written from scratch in Rust and runs in this page. It learned its book from IMDB reviews in <b id="lTrain">half a second</b>, and, loaded with GPT-4's book, it matches <b>tiktoken</b> token for token.</p>
+        <form class="slip" onsubmit="return false">
+          <label class="sc" for="msg">Your message</label>
+          <textarea id="msg" spellcheck="false" placeholder="Type anything. Every token is a code word."></textarea>
+        </form>
+        <div class="samples" id="samples" aria-label="Sample messages">
+          <button type="button" data-s="review">a movie review</button>
+          <button type="button" data-s="code">some Rust</button>
+          <button type="button" data-s="cable">an old cable</button>
+          <button type="button" data-s="numbers">an invoice</button>
+          <button type="button" data-s="world">three languages</button>
+        </div>
+        <p class="status" id="status" role="status">Opening the books…</p>
+        <span class="folio">1</span>
+      </div>
+      <div class="page right">
+        <div class="runhead"><span class="sc">Two transcriptions</span><span class="sc">Hover a word for its number</span></div>
+        <section class="ledger" aria-labelledby="h-mine">
+          <header><h2 class="h3" id="h-mine">In this book</h2><span class="sc">32,768 entries, from IMDB reviews</span></header>
+          <div class="count"><b id="nMine">–</b><span>code words</span><b id="rMine">–</b><span>characters each</span></div>
+          <div class="tape" id="tMine" aria-live="polite"></div>
+        </section>
+        <section class="ledger" aria-labelledby="h-gpt">
+          <header><h2 class="h3" id="h-gpt">In GPT-4's book</h2><span class="sc">cl100k_base, 100,256 entries</span></header>
+          <div class="count"><b id="nGpt">–</b><span>code words</span><b id="rGpt">–</b><span>characters each</span></div>
+          <div class="tape" id="tGpt" aria-live="polite"></div>
+        </section>
+        <p class="compare" id="compare"></p>
+        <span class="folio">2</span>
+      </div>
+    </div>
+
+    <!-- Spread 2: the entries -->
+    <div class="spread" id="sp-entries" role="tabpanel" aria-labelledby="tab-entries" hidden>
+      <div class="page left">
+        <div class="runhead"><span class="sc">Codebook</span><span class="sc">Entries 256 to 295</span></div>
+        <h2>The first <em>entries</em></h2>
+        <p class="lede">The book starts with one entry per byte, 0 to 255. Training then keeps adding the most frequent adjacent pair, counted across all 25,000 reviews. These are the first forty additions and how often each pair occurred when it was chosen. A dot is a space.</p>
+        <div class="dict" id="dict"></div>
+        <span class="folio">3</span>
+      </div>
+      <div class="page right">
+        <div class="runhead"><span class="sc">Entries</span><span class="sc">The longest words</span></div>
+        <h2>The <em>longest</em></h2>
+        <p class="lede">After 32,512 additions, whole words have their own entry. The longest are the vocabulary of film criticism.</p>
+        <ol class="longest" id="longest"></ol>
+        <p class="marginal" id="trainNote"></p>
+        <span class="folio">4</span>
+      </div>
+    </div>
+
+    <!-- Spread 3: rates -->
+    <div class="spread" id="sp-rates" role="tabpanel" aria-labelledby="tab-rates" hidden>
+      <div class="page left">
+        <div class="runhead"><span class="sc">Codebook</span><span class="sc">Rates</span></div>
+        <h2>The <em>rate card</em></h2>
+        <p class="lede">More bytes per token means shorter messages: cheaper and faster for a model. Measured on text the book never saw while it learned.</p>
+        <div class="legend" aria-hidden="true">
+          <span><svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--c-imdb)" stroke-width="2"/><circle cx="12" cy="5" r="4" fill="var(--c-imdb)"/></svg>25,000 IMDB test reviews</span>
+          <span><svg width="24" height="10"><line x1="0" y1="5" x2="24" y2="5" stroke="var(--c-rust)" stroke-width="2" stroke-dasharray="5 3"/><rect x="8" y="1" width="8" height="8" fill="var(--c-rust)"/></svg>8 MB of Rust</span>
+          <span><svg width="12" height="12"><circle cx="6" cy="6" r="4.5" fill="none" stroke="var(--soft)" stroke-width="2"/></svg>OpenAI's books</span>
+        </div>
+        <div class="chart" id="chart"></div>
+        <p class="marginal" id="fitNote"></p>
+        <span class="folio">5</span>
+      </div>
+      <div class="page right">
+        <div class="runhead"><span class="sc">Rates</span><span class="sc">Proof and speed</span></div>
+        <h3>Checked against tiktoken</h3>
+        <div class="tally"><span class="zero" id="cMismatch">0</span><p id="cText">documents encoded differently.</p></div>
+        <table class="checks" id="cTable"></table>
+        <h3>Where the time went</h3>
+        <p class="lede" id="sText"></p>
+        <div class="bars" id="bars"></div>
+        <span class="folio">6</span>
+      </div>
+    </div>
+
+    <!-- Spread 4: notes -->
+    <div class="spread" id="sp-notes" role="tabpanel" aria-labelledby="tab-notes" hidden>
+      <div class="page left">
+        <div class="runhead"><span class="sc">Codebook</span><span class="sc">Notes</span></div>
+        <h2>Notes on <em>the book</em></h2>
+        <div class="note"><h3>A book fits its text</h3><p id="n1"></p></div>
+        <div class="note"><h3>Nothing is unknown</h3><p>The book starts with all 256 bytes, so any text can be encoded, including emoji and scripts it never saw. They just cost more: a Chinese character it has no entry for takes three code words, one per byte. Try "three languages" on the first spread.</p></div>
+        <div class="note"><h3>The scanner</h3><p id="n3"></p></div>
+        <span class="folio">7</span>
+      </div>
+      <div class="page right">
+        <div class="runhead"><span class="sc">Notes</span><span class="sc">Rate table</span></div>
+        <div class="tablewrap"><table class="data" id="table"></table></div>
+        <div class="colophon">
+          <p><b>Codebook</b> is project 08 of Evan Wilson's AI project run. Source, write-up and every number in this book: <a href="https://github.com/evannwilsonn/codebook">github.com/evannwilsonn/codebook</a>.</p>
+          <p>Set in Libre Caslon and Courier Prime. The tokenizer is Rust compiled to WebAssembly. GPT-4's vocabulary is OpenAI's cl100k_base as published with tiktoken. Reviews from the IMDB Large Movie Review Dataset (Maas et al., 2011). Nothing you type leaves the page.</p>
+        </div>
+        <span class="folio">8</span>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script type="text/plain" id="z-wasm">{{WASM}}</script>
+<script type="text/plain" id="z-imdb">{{IMDB}}</script>
+<script type="text/plain" id="z-cl100k">{{CL100K}}</script>
+<script>
+const RESULTS = {{RESULTS}};
+const TIKTOKEN = {{TIKTOKEN}};
+const $ = id => document.getElementById(id);
+const fmt = n => n.toLocaleString("en-US");
+
+/* Lamp (theme) */
+(function(){
+  const root = document.documentElement, btn = $("theme");
+  const dark = () => root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  const label = () => { btn.textContent = dark() ? "lamp on" : "lamp off"; };
+  try { const t = localStorage.getItem("codebook-theme"); if (t) root.dataset.theme = t; } catch (e) {}
+  label();
+  btn.addEventListener("click", () => {
+    root.dataset.theme = dark() ? "light" : "dark";
+    try { localStorage.setItem("codebook-theme", root.dataset.theme); } catch (e) {}
+    label();
+  });
+})();
+
+/* Thumb index: one spread at a time */
+const SPREADS = ["send", "entries", "rates", "notes"];
+function open(name, focus){
+  if (!SPREADS.includes(name)) name = "send";
+  for (const s of SPREADS) {
+    $("sp-" + s).hidden = s !== name;
+    const tab = $("tab-" + s);
+    tab.setAttribute("aria-selected", s === name ? "true" : "false");
+    tab.tabIndex = s === name ? 0 : -1;
+  }
+  if (focus) $("tab-" + name).focus();
+  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+}
+document.querySelector(".tabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-spread]");
+  if (!b) return;
+  open(b.dataset.spread);
+  if (innerWidth <= 980) $("book").scrollIntoView({ block: "start" });
+});
+document.querySelector(".tabs").addEventListener("keydown", e => {
+  const i = SPREADS.indexOf(document.activeElement.dataset.spread);
+  if (i < 0) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); open(SPREADS[(i + 1) % 4], true); }
+  if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); open(SPREADS[(i + 3) % 4], true); }
+});
+open(location.hash.slice(1));
+
+/* Samples (written for this page) */
+const SAMPLES = {
+  review: "I went in expecting another tired sequel and came out grinning. The leads have real chemistry, the jokes land, and the final chase is staged so clearly you never lose track of who is where. Not perfect (the middle drags) but easily the most fun I've had at the cinema this year.",
+  code: "fn main() {\n    let words = vec![\"the\", \"cat\", \"sat\"];\n    for (i, w) in words.iter().enumerate() {\n        println!(\"{i}: {w}\");\n    }\n}",
+  cable: "ARRIVING TUESDAY NOON STOP MEET AT STATION STOP BRING CONTRACT SIGNED STOP",
+  numbers: "Invoice 4471: 1,250 units at $19.99 each, shipped 2026-10-17. Reference #00921847.",
+  world: "Where is the station? ¿Dónde está la estación? 駅はどこですか？",
+};
+
+/* Base64 + gzip blobs embedded in the page */
+async function blob(id){
+  const b64 = $(id).textContent.trim();
+  const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+const utf8Lossy = new TextDecoder();
+
+/* Wasm encodes; the page keeps each token's bytes for display. */
+let wasm = null;
+const books = {};
+function rankTable(text){
+  const byId = [];
+  for (const line of text.split("\n")) {
+    if (!line) continue;
+    const sp = line.indexOf(" ");
+    byId[+line.slice(sp + 1)] = line.slice(0, sp);
+  }
+  return byId;
+}
+function put(bytes){
+  const p = wasm.cb_alloc(bytes.length);
+  new Uint8Array(wasm.memory.buffer, p, bytes.length).set(bytes);
+  return p;
+}
+function loadBook(bytes){
+  const p = put(bytes);
+  const slot = wasm.cb_load(p, bytes.length, 4);
+  wasm.cb_free(p, bytes.length);
+  if (slot < 0) throw new Error("vocabulary did not load");
+  return { slot, ranks: rankTable(utf8Lossy.decode(bytes)) };
+}
+function encode(book, text){
+  const bytes = new TextEncoder().encode(text);
+  const p = put(bytes);
+  const n = wasm.cb_encode(book.slot, p, bytes.length);
+  wasm.cb_free(p, bytes.length);
+  return Array.from(new Uint32Array(wasm.memory.buffer, wasm.cb_ids(), n));
+}
+const tokenBytes = (book, id) => Uint8Array.from(atob(book.ranks[id]), c => c.charCodeAt(0));
+
+/* Spaces and line breaks are shown; a token that is part of a character shows its bytes. */
+function showText(el, s){
+  for (const part of s.split(/( |\n|\t)/)) {
+    if (part === " " || part === "\n" || part === "\t") {
+      const w = document.createElement("span");
+      w.className = "ws";
+      w.textContent = part === " " ? "·" : part === "\n" ? "↵" : "→";
+      el.append(w);
+    } else if (part) el.append(part);
+  }
+}
+function renderTape(target, book, ids){
+  const frag = document.createDocumentFragment();
+  for (const id of ids) {
+    const bytes = tokenBytes(book, id);
+    const tok = document.createElement("span");
+    tok.className = "tok";
+    const num = document.createElement("i");
+    num.textContent = id;
+    const body = document.createElement("span");
+    let text = null;
+    try { text = utf8.decode(bytes); showText(body, text); }
+    catch (e) {
+      const h = document.createElement("span");
+      h.className = "hex";
+      h.textContent = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join(" ");
+      body.append(h);
+    }
+    tok.append(num, body);
+    tok.title = `code word ${id} · ${bytes.length} byte${bytes.length > 1 ? "s" : ""}${text === null ? " · part of a character" : ""}`;
+    frag.append(tok);
+    if (text && text.endsWith("\n")) {
+      const br = document.createElement("span");
+      br.className = "tok break";
+      br.setAttribute("aria-hidden", "true");
+      frag.append(br);
+    }
+  }
+  target.replaceChildren(frag);
+}
+
+function run(){
+  if (!wasm) return;
+  const text = $("msg").value;
+  const chars = [...text].length;
+  const a = encode(books.mine, text), b = encode(books.gpt, text);
+  renderTape($("tMine"), books.mine, a);
+  renderTape($("tGpt"), books.gpt, b);
+  $("nMine").textContent = fmt(a.length);
+  $("nGpt").textContent = fmt(b.length);
+  $("rMine").textContent = a.length ? (chars / a.length).toFixed(2) : "–";
+  $("rGpt").textContent = b.length ? (chars / b.length).toFixed(2) : "–";
+  const c = $("compare");
+  if (!text.trim()) { c.textContent = ""; return; }
+  if (a.length === b.length) { c.innerHTML = `Both books charge the same: <b>${fmt(a.length)}</b> code words.`; return; }
+  const winner = a.length < b.length ? "this book" : "GPT-4's book";
+  const more = Math.max(a.length, b.length), less = Math.min(a.length, b.length);
+  c.innerHTML = `Sent with ${winner}, this message takes <b>${fmt(more - less)}</b> fewer code word${more - less > 1 ? "s" : ""}, ${Math.round(100 * (1 - less / more))}% cheaper.`;
+}
+
+function markSample(key){
+  for (const b of document.querySelectorAll("#samples button")) b.setAttribute("aria-pressed", b.dataset.s === key ? "true" : "false");
+}
+$("samples").addEventListener("click", e => {
+  const b = e.target.closest("button[data-s]");
+  if (!b) return;
+  $("msg").value = SAMPLES[b.dataset.s];
+  markSample(b.dataset.s);
+  run();
+});
+
+async function boot(){
+  try {
+    const [w, imdb, cl] = await Promise.all([blob("z-wasm"), blob("z-imdb"), blob("z-cl100k")]);
+    const { instance } = await WebAssembly.instantiate(w, {});
+    wasm = instance.exports;
+    books.mine = loadBook(imdb);
+    books.gpt = loadBook(cl);
+    $("status").textContent = "Both books are open. Encoding happens in your browser.";
+    let t;
+    $("msg").addEventListener("input", () => { clearTimeout(t); t = setTimeout(run, 60); markSample(null); });
+    if (!$("msg").value) { $("msg").value = SAMPLES.review; markSample("review"); }
+    run();
+  } catch (e) {
+    console.error(e);
+    $("status").textContent = "This browser could not start the tokenizer (it needs WebAssembly and gzip streams). The other spreads still work.";
+  }
+}
+
+/* The rest of the book, filled from the results files */
+const R = RESULTS;
+const cl = R.reference.find(r => r.name === "cl100k_base"), r50 = R.reference.find(r => r.name === "r50k_base");
+const sweep = R.sweep, last = sweep[sweep.length - 1];
+const refName = ref => ref.name === "cl100k_base" ? "GPT-4" : "GPT-2";
+$("lTrain").textContent = R.training.seconds < 1 ? "half a second" : `${R.training.seconds.toFixed(0)} seconds`;
+
+for (const m of R.firstMerges) {
+  const row = document.createElement("div");
+  row.className = "entry";
+  const no = document.createElement("span"); no.className = "no"; no.textContent = m.id;
+  const ph = document.createElement("span"); ph.className = "ph"; showText(ph, m.text);
+  const lead = document.createElement("span"); lead.className = "lead";
+  const ct = document.createElement("span"); ct.className = "ct"; ct.textContent = fmt(m.count);
+  row.append(no, ph, lead, ct);
+  $("dict").append(row);
+}
+for (const t of R.longestTokens) {
+  const li = document.createElement("li");
+  showText(li, t.text);
+  const n = document.createElement("span"); n.className = "n"; n.textContent = `No. ${t.id}`;
+  li.append(n);
+  $("longest").append(li);
+}
+$("trainNote").textContent = `Training, fast. Recounting every pair before each addition took ${R.trainers.naiveSeconds.toFixed(1)} seconds for the first ${fmt(R.trainers.merges)}. Keeping running counts and touching only the words that change took ${R.trainers.incrementalSeconds.toFixed(2)} seconds, with the same entries in the same order. All ${fmt(R.training.merges)} took ${R.training.seconds.toFixed(1)} seconds.`;
+
+/* Chart: bytes per token against book size (log scale). */
+(function chart(){
+  const W = 560, H = 360, m = { l: 34, r: 92, t: 22, b: 46 };
+  const xMin = 8, xMax = 17;
+  const X = v => m.l + (Math.log2(v) - xMin) / (xMax - xMin) * (W - m.l - m.r);
+  const Y = v => H - m.b - v / 5 * (H - m.t - m.b);
+  const ns = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.append(e); return e; };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Bytes per token by book size, for IMDB reviews and Rust source, with OpenAI's books for comparison" });
+  const grid = el("g", { class: "grid" }, svg), axis = el("g", { class: "axis" }, svg);
+  for (let v = 0; v <= 5; v++) {
+    el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }, grid);
+    el("text", { x: m.l - 8, y: Y(v) + 4, "text-anchor": "end" }, axis).textContent = v;
+  }
+  for (let p = xMin; p <= xMax; p += 1) {
+    const v = 2 ** p;
+    if (p % 2 === 1 && p !== xMax) continue;
+    el("text", { x: X(v), y: H - m.b + 20, "text-anchor": "middle" }, axis).textContent = v >= 1024 ? `${v / 1024}k` : v;
+  }
+  el("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }, axis).textContent = "entries in the book (log scale)";
+  el("text", { x: m.l - 8, y: m.t - 10 }, axis).textContent = "bytes per token";
+
+  const tip = $("tip");
+  const hover = (node, text) => {
+    node.addEventListener("pointerenter", () => { tip.textContent = text; tip.style.opacity = 1; });
+    node.addEventListener("pointermove", e => { tip.style.left = Math.min(e.clientX + 14, innerWidth - 270) + "px"; tip.style.top = e.clientY + 14 + "px"; });
+    node.addEventListener("pointerleave", () => { tip.style.opacity = 0; });
+  };
+  const series = [
+    { key: "imdbTest", color: "var(--c-imdb)", dash: "", name: "reviews", shape: "circle" },
+    { key: "rust", color: "var(--c-rust)", dash: "6 4", name: "Rust", shape: "square" },
+  ];
+  for (const s of series) {
+    const pts = sweep.map(r => [X(r.vocab), Y(r[s.key].bytesPerToken)]);
+    el("path", { d: "M" + pts.map(p => p.join(",")).join("L"), fill: "none", stroke: s.color, "stroke-width": 2, "stroke-dasharray": s.dash }, svg);
+    sweep.forEach((r, i) => {
+      const [x, y] = pts[i];
+      if (s.shape === "circle") el("circle", { cx: x, cy: y, r: 4.5, fill: s.color, stroke: "var(--page)", "stroke-width": 2 }, svg);
+      else el("rect", { x: x - 4.5, y: y - 4.5, width: 9, height: 9, fill: s.color, stroke: "var(--page)", "stroke-width": 2 }, svg);
+      hover(el("circle", { class: "hit", cx: x, cy: y, r: 13 }, svg), `${s.name}, ${fmt(r.vocab)} entries\n${r[s.key].bytesPerToken.toFixed(2)} bytes per token`);
+    });
+    for (const ref of [r50, cl]) {
+      const x = X(ref.vocab), y = Y(ref[s.key].bytesPerToken);
+      el("circle", { cx: x, cy: y, r: 6, fill: "var(--page)", stroke: s.color, "stroke-width": 2 }, svg);
+      hover(el("circle", { class: "hit", cx: x, cy: y, r: 13 }, svg), `${refName(ref)} (${ref.name}), ${fmt(ref.vocab)} entries\n${s.name}: ${ref[s.key].bytesPerToken.toFixed(2)} bytes per token`);
+    }
+    const y = Y(cl[s.key].bytesPerToken);
+    el("text", { class: "lbl", x: X(cl.vocab) + 12, y: y + 4, fill: s.color }, svg).textContent = s.name;
+  }
+  for (const ref of [r50, cl]) {
+    const x = X(ref.vocab);
+    el("line", { x1: x, x2: x, y1: Y(0), y2: Y(0) - 8, stroke: "var(--soft)", "stroke-width": 1.5 }, svg);
+    el("text", { class: "lbl", x, y: Y(0) - 14, "text-anchor": "middle", fill: "var(--soft)" }, svg).textContent = refName(ref);
+  }
+  $("chart").append(svg);
+})();
+$("fitNote").textContent = `A book fits its text. With a third of GPT-4's entries, this one is slightly better on reviews (${last.imdbTest.bytesPerToken.toFixed(2)} bytes per token against ${cl.imdbTest.bytesPerToken.toFixed(2)}) and far worse on code (${last.rust.bytesPerToken.toFixed(2)} against ${cl.rust.bytesPerToken.toFixed(2)}).`;
+
+/* Proof */
+(function check(){
+  let mismatched = 0, docs = 0;
+  const rows = [];
+  for (const ref of R.reference) {
+    for (const key of ["imdbTest", "rust"]) {
+      const c = ref[key];
+      for (const split of ["regex", "scanner"]) if (c[split]) mismatched += c[split].mismatched;
+      if (ref.name === "cl100k_base") docs += c.documents;
+      const worst = Math.max(...["regex", "scanner"].filter(s => c[s]).map(s => c[s].mismatched));
+      rows.push(`<tr><td>${refName(ref)}'s book, ${key === "imdbTest" ? "reviews" : "Rust"}</td><td>${fmt(c.documents)}</td><td>${worst === 0 ? "identical" : fmt(worst) + " differ"}</td></tr>`);
+    }
+  }
+  $("cMismatch").textContent = fmt(mismatched);
+  $("cText").textContent = `documents encoded differently from tiktoken ${TIKTOKEN.tiktoken}, across all ${fmt(docs)} test documents and both of OpenAI's books. GPT-4's was checked twice: once splitting with the regex, once with the scanner.`;
+  $("cTable").innerHTML = rows.join("");
+})();
+
+/* Speed */
+(function speed(){
+  const sp = R.speed, tk = TIKTOKEN.encodings.cl100k_base;
+  const re = R.profile.find(p => p.split === "regex");
+  const get = (corpus, split) => sp.find(s => s.encoding === "cl100k_base" && s.corpus === corpus && s.split === split).plainMbPerSecond;
+  const groups = [["imdbTest", "imdb-test", "Reviews, GPT-4's book"], ["rust", "rust", "Rust, GPT-4's book"]];
+  const max = Math.max(...groups.map(([k]) => get(k, "scanner")));
+  for (const [key, tkKey, title] of groups) {
+    const g = document.createElement("div");
+    g.className = "group";
+    g.innerHTML = `<div class="gname">${title}</div>`;
+    const rows = [
+      ["tiktoken", "from Python", tk[tkKey].mbPerSecond, false],
+      ["Codebook, regex", "tiktoken's regex", get(key, "regex"), false],
+      ["Codebook, scanner", "hand-written split", get(key, "scanner"), true],
+    ];
+    for (const [name, sub, v, mine] of rows) {
+      g.insertAdjacentHTML("beforeend", `<div class="bar${mine ? " mine" : ""}"><span class="name">${name}<small>${sub}</small></span><span class="track"><span class="fill" style="width:${(v / max * 100).toFixed(1)}%"></span></span><span class="val">${v.toFixed(1)} MB/s</span></div>`);
+    }
+    $("bars").append(g);
+  }
+  $("sText").textContent = `Splitting text into words with the regex was ${Math.round(re.splitShare * 100)}% of encoding time; the merging was the small part. So the split became a hand-written scanner. Single thread, median of three runs, same documents for every bar.`;
+  const sc = R.profile.find(p => p.split === "scanner"), checked = R.profile.find(p => p.piecesCheckedDocuments);
+  $("n3").textContent = `The scanner walks the text once and applies GPT-4's eight splitting rules in order (contractions, words, digits in threes, punctuation, then four kinds of whitespace). It gives the regex's pieces on all ${fmt(checked.piecesCheckedDocuments)} documents, training text included, and cuts splitting 32 MB of reviews from ${re.splitSeconds.toFixed(2)} to ${sc.splitSeconds.toFixed(2)} seconds.`;
+})();
+
+/* Notes and table */
+$("n1").textContent = `A tokenizer is a compression scheme fitted to the text it learned from. This book learned from reviews only: it beats GPT-4's book on reviews with a third of the entries, but it never saw indentation or snake_case, so on Rust it spells them out a few letters at a time (${last.rust.bytesPerToken.toFixed(2)} bytes per token against GPT-4's ${cl.rust.bytesPerToken.toFixed(2)}).`;
+(function table(){
+  const row = (name, v, imdb, rust) => `<tr><td>${name}</td><td>${fmt(v)}</td><td>${imdb.bytesPerToken.toFixed(2)}</td><td>${rust.bytesPerToken.toFixed(2)}</td></tr>`;
+  const rows = sweep.map(r => row(r.vocab === 256 ? "Bytes only" : "Codebook", r.vocab, r.imdbTest, r.rust));
+  for (const ref of [r50, cl]) rows.push(row(refName(ref), ref.vocab, ref.imdbTest, ref.rust));
+  $("table").innerHTML = `<caption>Bytes per token, held-out text</caption><thead><tr><th scope="col">Book</th><th scope="col">Entries</th><th scope="col">Reviews</th><th scope="col">Rust</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+})();
+
+boot();
+</script>
+</body>
+</html>

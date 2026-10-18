@@ -1,0 +1,38 @@
+{
+  "tiktoken": "0.14.0",
+  "runs": 3,
+  "encodings": {
+    "cl100k_base": {
+      "imdb-test": {
+        "documents": 25000,
+        "bytes": 31850295,
+        "tokens": 7054295,
+        "seconds": 2.0288,
+        "mbPerSecond": 15.7
+      },
+      "rust": {
+        "documents": 795,
+        "bytes": 7853296,
+        "tokens": 2081202,
+        "seconds": 0.7433,
+        "mbPerSecond": 10.57
+      }
+    },
+    "r50k_base": {
+      "imdb-test": {
+        "documents": 25000,
+        "bytes": 31850295,
+        "tokens": 7161310,
+        "seconds": 1.8476,
+        "mbPerSecond": 17.24
+      },
+      "rust": {
+        "documents": 795,
+        "bytes": 7853296,
+        "tokens": 3385046,
+        "seconds": 0.7359,
+        "mbPerSecond": 10.67
+      }
+    }
+  }
+}

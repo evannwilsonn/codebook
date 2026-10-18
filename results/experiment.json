@@ -1,0 +1,81 @@
+{
+  "corpus": {
+    "train": {"documents": 25000, "bytes": 32623473, "pieces": 6762661, "distinctPieces": 123930, "seconds": 1.97},
+    "imdbTest": {"documents": 25000, "bytes": 31850295},
+    "rust": {"documents": 795, "bytes": 7853296}
+  },
+  "trainers": {"merges": 1024, "naiveSeconds": 5.66, "incrementalSeconds": 0.226, "identical": true},
+  "training": {"vocab": 32768, "merges": 32512, "seconds": 0.51},
+  "sweep": [
+    {"vocab": 256, "imdbTest": {"tokens": 31850295, "bytesPerToken": 1.0000, "roundTrip": true}, "rust": {"tokens": 7853296, "bytesPerToken": 1.0000, "roundTrip": true}},
+    {"vocab": 512, "imdbTest": {"tokens": 14963505, "bytesPerToken": 2.1285, "roundTrip": true}, "rust": {"tokens": 5816320, "bytesPerToken": 1.3502, "roundTrip": true}},
+    {"vocab": 1024, "imdbTest": {"tokens": 11719998, "bytesPerToken": 2.7176, "roundTrip": true}, "rust": {"tokens": 5314112, "bytesPerToken": 1.4778, "roundTrip": true}},
+    {"vocab": 2048, "imdbTest": {"tokens": 9896390, "bytesPerToken": 3.2184, "roundTrip": true}, "rust": {"tokens": 5006363, "bytesPerToken": 1.5687, "roundTrip": true}},
+    {"vocab": 4096, "imdbTest": {"tokens": 8695338, "bytesPerToken": 3.6629, "roundTrip": true}, "rust": {"tokens": 4761073, "bytesPerToken": 1.6495, "roundTrip": true}},
+    {"vocab": 8192, "imdbTest": {"tokens": 7894350, "bytesPerToken": 4.0346, "roundTrip": true}, "rust": {"tokens": 4484090, "bytesPerToken": 1.7514, "roundTrip": true}},
+    {"vocab": 16384, "imdbTest": {"tokens": 7357666, "bytesPerToken": 4.3289, "roundTrip": true}, "rust": {"tokens": 4164792, "bytesPerToken": 1.8856, "roundTrip": true}},
+    {"vocab": 32768, "imdbTest": {"tokens": 7016155, "bytesPerToken": 4.5396, "roundTrip": true}, "rust": {"tokens": 4001471, "bytesPerToken": 1.9626, "roundTrip": true}}
+  ],
+  "reference": [
+    {"name": "cl100k_base", "vocab": 100256, "imdbTest": {"tokens": 7054295, "bytesPerToken": 4.5150, "documents": 25000, "regex": {"tokens": 7054295, "mismatched": 0}, "scanner": {"tokens": 7054295, "mismatched": 0}}, "rust": {"tokens": 2081202, "bytesPerToken": 3.7734, "documents": 795, "regex": {"tokens": 2081202, "mismatched": 0}, "scanner": {"tokens": 2081202, "mismatched": 0}}},
+    {"name": "r50k_base", "vocab": 50256, "imdbTest": {"tokens": 7161310, "bytesPerToken": 4.4476, "documents": 25000, "regex": {"tokens": 7161310, "mismatched": 0}}, "rust": {"tokens": 3385046, "bytesPerToken": 2.3200, "documents": 795, "regex": {"tokens": 3385046, "mismatched": 0}}}
+  ],
+  "speed": [
+    {"encoding": "cl100k_base", "split": "regex", "corpus": "imdbTest", "plainMbPerSecond": 16.11, "cachedMbPerSecond": 14.21},
+    {"encoding": "cl100k_base", "split": "scanner", "corpus": "imdbTest", "plainMbPerSecond": 72.72, "cachedMbPerSecond": 80.55},
+    {"encoding": "cl100k_base", "split": "regex", "corpus": "rust", "plainMbPerSecond": 10.00, "cachedMbPerSecond": 8.47},
+    {"encoding": "cl100k_base", "split": "scanner", "corpus": "rust", "plainMbPerSecond": 54.55, "cachedMbPerSecond": 79.71},
+    {"encoding": "r50k_base", "split": "regex", "corpus": "imdbTest", "plainMbPerSecond": 18.42, "cachedMbPerSecond": 14.72},
+    {"encoding": "r50k_base", "split": "regex", "corpus": "rust", "plainMbPerSecond": 9.80, "cachedMbPerSecond": 9.77},
+    {"encoding": "imdb-32k", "split": "scanner", "corpus": "imdbTest", "plainMbPerSecond": 86.85, "cachedMbPerSecond": 77.82},
+    {"encoding": "imdb-32k", "split": "scanner", "corpus": "rust", "plainMbPerSecond": 29.78, "cachedMbPerSecond": 91.77}
+  ],
+  "profile": [
+    {"split": "regex", "splitSeconds": 1.589, "encodeSeconds": 2.072, "splitShare": 0.767},
+    {"split": "scanner", "splitSeconds": 0.139, "encodeSeconds": 0.461, "splitShare": 0.302},
+    {"piecesCheckedDocuments": 50795, "piecesDiffer": 0}
+  ],
+  "firstMerges": [
+    {"id": 256, "text": " t", "count": 787470},
+    {"id": 257, "text": " a", "count": 628797},
+    {"id": 258, "text": "he", "count": 581739},
+    {"id": 259, "text": "in", "count": 472339},
+    {"id": 260, "text": " the", "count": 354046},
+    {"id": 261, "text": " s", "count": 351409},
+    {"id": 262, "text": "re", "count": 335013},
+    {"id": 263, "text": " w", "count": 319860},
+    {"id": 264, "text": " o", "count": 310751},
+    {"id": 265, "text": "is", "count": 295545},
+    {"id": 266, "text": "er", "count": 277530},
+    {"id": 267, "text": "nd", "count": 245234},
+    {"id": 268, "text": " f", "count": 235451},
+    {"id": 269, "text": " m", "count": 232489},
+    {"id": 270, "text": " b", "count": 230866},
+    {"id": 271, "text": "it", "count": 227907},
+    {"id": 272, "text": "at", "count": 225245},
+    {"id": 273, "text": "ing", "count": 202731},
+    {"id": 274, "text": " c", "count": 196256},
+    {"id": 275, "text": "en", "count": 194031},
+    {"id": 276, "text": "es", "count": 189336},
+    {"id": 277, "text": "or", "count": 187903},
+    {"id": 278, "text": "ou", "count": 184975},
+    {"id": 279, "text": " th", "count": 184138},
+    {"id": 280, "text": "on", "count": 176560},
+    {"id": 281, "text": " h", "count": 165646},
+    {"id": 282, "text": "ll", "count": 159469},
+    {"id": 283, "text": "an", "count": 154312},
+    {"id": 284, "text": " and", "count": 153768},
+    {"id": 285, "text": " to", "count": 153713},
+    {"id": 286, "text": " of", "count": 153495},
+    {"id": 287, "text": " p", "count": 150303},
+    {"id": 288, "text": "ar", "count": 147940},
+    {"id": 289, "text": " d", "count": 143770},
+    {"id": 290, "text": "ed", "count": 140316},
+    {"id": 291, "text": "as", "count": 137116},
+    {"id": 292, "text": " in", "count": 130850},
+    {"id": 293, "text": " l", "count": 126438},
+    {"id": 294, "text": "om", "count": 112072},
+    {"id": 295, "text": " is", "count": 110397}
+  ],
+  "longestTokens": [{"id": 14828, "text": " characterizations"}, {"id": 23435, "text": " misunderstandings"}, {"id": 27617, "text": " indistinguishable"}, {"id": 8244, "text": " characterization"}, {"id": 10152, "text": " incomprehensible"}, {"id": 15045, "text": " characterisation"}, {"id": 24689, "text": " misunderstanding"}, {"id": 25359, "text": " enthusiastically"}, {"id": 26877, "text": " responsibilities"}, {"id": 29027, "text": " autobiographical"}, {"id": 8454, "text": " unintentionally"}, {"id": 9459, "text": " cinematographer"}]
+}

@@ -1,0 +1,9 @@
+target/
+data/aclImdb
+data/aclImdb/
+data/corpus/
+data/ranks/
+data/*.tgz
+bench/out/
+.impeccable/
+__pycache__/
